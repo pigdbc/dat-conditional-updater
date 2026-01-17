@@ -5,7 +5,7 @@
 ## 📁 文件结构
 
 ```
-4-DATConditionalUpdater/
+4-dat-conditional-updater/
 ├── in/                          ← 输入文件夹 (放置原始DAT文件)
 ├── out/                         ← 输出文件夹 (自动生成)
 ├── log/                         ← 日志文件夹 (自动生成)
