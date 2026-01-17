@@ -88,47 +88,97 @@ $UpdateRules = @(
         # SET更新部分（条件满足时执行的更新操作）
         Updates = @(
             @{
-                StartByte = 70    # 更新第70字节开始的位置
-                Value = "056"     # 新值为"056"（占6字节）
-            }
-        )
-    },
+                StartByte# ==================== 配置文件加载 ====================
+$ConfigFile = "config.ini"
+if (-not (Test-Path $ConfigFile)) { $ConfigFile = "config_日本語.ini" }
+if ($args.Count -gt 1) { $ConfigFile = $args[1] } # 允许从命令行传入配置文件路径
+
+if (-not (Test-Path $ConfigFile)) {
+    Write-Host "错误: 配置文件 '$ConfigFile' 不存在！" -ForegroundColor Red
+    exit 1
+}
+
+# INI解析函数
+function Parse-IniFile {
+    param([string]$FilePath)
+    $ini = @{}
+    $section = "Global"
     
-    # ========== 规则2 ==========
-    @{
-        Name = "Rule-2"
+    Get-Content $FilePath -Encoding UTF8 | ForEach-Object {
+        $line = $_.Trim()
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith(";") -or $line.StartsWith("#")) { return }
         
-        # 这条规则只有一个条件（WHERE条件）
-        Conditions = @(
-            @{
-                StartByte = 234   # 从第234字节开始检查
-                Value = "99"      # 期望的值是"99"（占4字节）
-            }
-        )
-        
-        # 更新操作
-        Updates = @(
-            @{
-                StartByte = 300   # 更新第300字节开始的位置
-                Value = "77"      # 新值为"77"（占4字节）
-            }
-        )
+        if ($line -match "^\[(.*)\]$") {
+            $section = $matches[1]
+            $ini[$section] = @{}
+        } elseif ($line -match "^(.*?)=(.*)$") {
+            $key = $matches[1].Trim()
+            $value = $matches[2].Trim()
+            if (-not $ini.ContainsKey($section)) { $ini[$section] = @{} }
+            $ini[$section][$key] = $value
+        }
     }
-    
-    # 【如何添加更多规则】
-    # 在上面的大括号后面加逗号，然后按照同样的格式添加新规则
-    # 例如：
-    # ,
-    # @{
-    #     Name = "Rule-3"
-    #     Conditions = @(
-    #         @{ StartByte = 100; Value = "ABC" }
-    #     )
-    #     Updates = @(
-    #         @{ StartByte = 200; Value = "XYZ" }
-    #     )
-    # }
-)
+    return $ini
+}
+
+$ConfigData = Parse-IniFile -FilePath $ConfigFile
+
+# ==================== 记录配置 (从INI加载) ====================
+if ($ConfigData.ContainsKey("Settings")) {
+    $RecordSize   = if ($ConfigData["Settings"]["RecordSize"]) { [int]$ConfigData["Settings"]["RecordSize"] } else { 1300 }
+    $HeaderMarker = if ($ConfigData["Settings"]["HeaderMarker"]) { [int]$ConfigData["Settings"]["HeaderMarker"] + 0x30 } else { 0x31 }
+    $DataMarker   = if ($ConfigData["Settings"]["DataMarker"]) { [int]$ConfigData["Settings"]["DataMarker"] + 0x30 } else { 0x32 }
+} else {
+    # 默认值
+    $RecordSize   = 1300
+    $HeaderMarker = 0x31
+    $DataMarker   = 0x32
+}
+
+# ==================== 更新规则配置 (从INI加载) ====================
+$UpdateRules = @()
+
+foreach ($key in $ConfigData.Keys) {
+    if ($key -like "Rule-*") {
+        $section = $ConfigData[$key]
+        
+        # 解析条件: "50:02, 78:534"
+        $conditions = @()
+        if ($section["Conditions"]) {
+            $section["Conditions"].Split(",") | ForEach-Object {
+                $parts = $_.Split(":")
+                if ($parts.Count -eq 2) {
+                    $conditions += @{
+                        StartByte = [int]$parts[0].Trim()
+                        Value     = $parts[1].Trim()
+                    }
+                }
+            }
+        }
+        
+        # 解析更新: "70:056"
+        $updates = @()
+        if ($section["Updates"]) {
+            $section["Updates"].Split(",") | ForEach-Object {
+                $parts = $_.Split(":")
+                if ($parts.Count -eq 2) {
+                    $updates += @{
+                        StartByte = [int]$parts[0].Trim()
+                        Value     = $parts[1].Trim()
+                    }
+                }
+            }
+        }
+        
+        if ($conditions.Count -gt 0 -and $updates.Count -gt 0) {
+            $UpdateRules += @{
+                Name       = $key
+                Conditions = $conditions
+                Updates    = $updates
+            }
+        }
+    }
+}
 
 # ==================== 辅助函数定义 ====================
 # 这些函数封装了常用的操作，使主程序逻辑更清晰
