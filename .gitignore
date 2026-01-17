@@ -1,0 +1,15 @@
+# Ignore output files
+out/*.dat
+out/*.log
+
+# Ignore log files
+log/*.log
+
+# Keep folder structure
+!in/README.txt
+!out/README.txt
+!log/README.txt
+
+# OS files
+.DS_Store
+Thumbs.db
