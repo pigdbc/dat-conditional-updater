@@ -13,45 +13,96 @@ $InFolder  = "in"
 $OutFolder = "out"
 $LogFolder = "log"
 
-# ==================== 记录配置 ====================
-$RecordSize   = 1300          # 每条记录的字节数
-$HeaderMarker = 0x31          # Header记录标识符 (ASCII '1')
-$DataMarker   = 0x32          # 数据记录标识符 (ASCII '2')
+# ==================== 配置文件加载 ====================
+$ConfigFile = "config.ini"
+if ($args.Count -gt 1) { $ConfigFile = $args[1] }
 
-# ==================== 更新规则配置 ====================
-# 格式类似 SQL: UPDATE table SET field=value WHERE condition1 AND condition2
-# 
-# StartByte: 起始位置 (1-indexed)
-# Value: 字符串值（脚本会自动转为BigEndianUnicode字节）
-# 注意: 每个字符占2字节 (UTF-16BE)
-#
-# 示例规则：
-# 如果第50位开始的2个字符等于"02"(占4字节)，则修改第70位开始为"056"
+if (-not (Test-Path $ConfigFile)) {
+    Write-Host "错误: 配置文件 '$ConfigFile' 不存在！" -ForegroundColor Red
+    exit 1
+}
 
-$UpdateRules = @(
-    @{
-        Name = "Rule-1"
-        # WHERE 条件 (所有条件必须同时满足 - AND关系)
-        Conditions = @(
-            @{ StartByte = 50;  Value = "02" },    # 第50位开始 = "02" (4字节)
-            @{ StartByte = 78;  Value = "534" }    # 第78位开始 = "534" (6字节)
-        )
-        # SET 修改操作
-        Updates = @(
-            @{ StartByte = 70;  Value = "056" }    # 修改第70位开始为"056" (6字节)
-        )
-    },
-    @{
-        Name = "Rule-2"
-        Conditions = @(
-            @{ StartByte = 234; Value = "99" }     # 第234位开始 = "99" (4字节)
-        )
-        Updates = @(
-            @{ StartByte = 300; Value = "77" }     # 修改第300位开始为"77" (4字节)
-        )
+# 简单的INI解析函数
+function Parse-IniFile {
+    param([string]$FilePath)
+    $ini = @{}
+    $section = "Global"
+    
+    Get-Content $FilePath -Encoding UTF8 | ForEach-Object {
+        $line = $_.Trim()
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith(";") -or $line.StartsWith("#")) { return }
+        
+        if ($line -match "^\[(.*)\]$") {
+            $section = $matches[1]
+            $ini[$section] = @{}
+        } elseif ($line -match "^(.*?)=(.*)$") {
+            $key = $matches[1].Trim()
+            $value = $matches[2].Trim()
+            if (-not $ini.ContainsKey($section)) { $ini[$section] = @{} }
+            $ini[$section][$key] = $value
+        }
     }
-    # 添加更多规则...
-)
+    return $ini
+}
+
+$ConfigData = Parse-IniFile -FilePath $ConfigFile
+
+# ==================== 记录配置 (从INI加载) ====================
+if ($ConfigData.ContainsKey("Settings")) {
+    $RecordSize   = if ($ConfigData["Settings"]["RecordSize"]) { [int]$ConfigData["Settings"]["RecordSize"] } else { 1300 }
+    $HeaderMarker = if ($ConfigData["Settings"]["HeaderMarker"]) { [int]$ConfigData["Settings"]["HeaderMarker"] + 0x30 } else { 0x31 }
+    $DataMarker   = if ($ConfigData["Settings"]["DataMarker"]) { [int]$ConfigData["Settings"]["DataMarker"] + 0x30 } else { 0x32 }
+} else {
+    # 默认值
+    $RecordSize   = 1300
+    $HeaderMarker = 0x31
+    $DataMarker   = 0x32
+}
+
+# ==================== 更新规则配置 (从INI加载) ====================
+$UpdateRules = @()
+
+foreach ($key in $ConfigData.Keys) {
+    if ($key -like "Rule-*") {
+        $section = $ConfigData[$key]
+        
+        # 解析条件: "50:02, 78:534"
+        $conditions = @()
+        if ($section["Conditions"]) {
+            $section["Conditions"].Split(",") | ForEach-Object {
+                $parts = $_.Split(":")
+                if ($parts.Count -eq 2) {
+                    $conditions += @{
+                        StartByte = [int]$parts[0].Trim()
+                        Value     = $parts[1].Trim()
+                    }
+                }
+            }
+        }
+        
+        # 解析更新: "70:056"
+        $updates = @()
+        if ($section["Updates"]) {
+            $section["Updates"].Split(",") | ForEach-Object {
+                $parts = $_.Split(":")
+                if ($parts.Count -eq 2) {
+                    $updates += @{
+                        StartByte = [int]$parts[0].Trim()
+                        Value     = $parts[1].Trim()
+                    }
+                }
+            }
+        }
+        
+        if ($conditions.Count -gt 0 -and $updates.Count -gt 0) {
+            $UpdateRules += @{
+                Name       = $key
+                Conditions = $conditions
+                Updates    = $updates
+            }
+        }
+    }
+}
 
 # ==================== 辅助函数 ====================
 

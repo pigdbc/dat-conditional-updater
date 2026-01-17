@@ -13,45 +13,97 @@ $InFolder  = "in"
 $OutFolder = "out"
 $LogFolder = "log"
 
-# ==================== レコード設定 ====================
-$RecordSize   = 1300          # 各レコードのバイト数
-$HeaderMarker = 0x31          # ヘッダーレコード識別子 (ASCII '1')
-$DataMarker   = 0x32          # データレコード識別子 (ASCII '2')
+# ==================== 設定ファイル読込 ====================
+$ConfigFile = "config.ini"
+if (-not (Test-Path $ConfigFile)) { $ConfigFile = "config_日本語.ini" }
+if ($args.Count -gt 1) { $ConfigFile = $args[1] }
 
-# ==================== 更新ルール設定 ====================
-# SQL形式: UPDATE table SET field=value WHERE condition1 AND condition2
-# 
-# StartByte: 開始位置 (1-indexed)
-# Value: 文字列値（BigEndianUnicodeバイトに自動変換）
-# 注意: 各文字は2バイト (UTF-16BE)
-#
-# ルール例：
-# 50バイト目から"02"(4バイト)の場合、70バイト目を"056"に更新
+if (-not (Test-Path $ConfigFile)) {
+    Write-Host "エラー: 設定ファイル '$ConfigFile' が見つかりません！" -ForegroundColor Red
+    exit 1
+}
 
-$UpdateRules = @(
-    @{
-        Name = "Rule-1"
-        # WHERE条件 (すべての条件を満たす必要 - AND関係)
-        Conditions = @(
-            @{ StartByte = 50;  Value = "02" },    # 50バイト目 = "02" (4バイト)
-            @{ StartByte = 78;  Value = "534" }    # 78バイト目 = "534" (6バイト)
-        )
-        # SET更新操作
-        Updates = @(
-            @{ StartByte = 70;  Value = "056" }    # 70バイト目を"056"に更新 (6バイト)
-        )
-    },
-    @{
-        Name = "Rule-2"
-        Conditions = @(
-            @{ StartByte = 234; Value = "99" }     # 234バイト目 = "99" (4バイト)
-        )
-        Updates = @(
-            @{ StartByte = 300; Value = "77" }     # 300バイト目を"77"に更新 (4バイト)
-        )
+# INI解析関数
+function Parse-IniFile {
+    param([string]$FilePath)
+    $ini = @{}
+    $section = "Global"
+    
+    Get-Content $FilePath -Encoding UTF8 | ForEach-Object {
+        $line = $_.Trim()
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith(";") -or $line.StartsWith("#")) { return }
+        
+        if ($line -match "^\[(.*)\]$") {
+            $section = $matches[1]
+            $ini[$section] = @{}
+        } elseif ($line -match "^(.*?)=(.*)$") {
+            $key = $matches[1].Trim()
+            $value = $matches[2].Trim()
+            if (-not $ini.ContainsKey($section)) { $ini[$section] = @{} }
+            $ini[$section][$key] = $value
+        }
     }
-    # ルールを追加...
-)
+    return $ini
+}
+
+$ConfigData = Parse-IniFile -FilePath $ConfigFile
+
+# ==================== レコード設定 (INIから読込) ====================
+if ($ConfigData.ContainsKey("Settings")) {
+    $RecordSize   = if ($ConfigData["Settings"]["RecordSize"]) { [int]$ConfigData["Settings"]["RecordSize"] } else { 1300 }
+    $HeaderMarker = if ($ConfigData["Settings"]["HeaderMarker"]) { [int]$ConfigData["Settings"]["HeaderMarker"] + 0x30 } else { 0x31 }
+    $DataMarker   = if ($ConfigData["Settings"]["DataMarker"]) { [int]$ConfigData["Settings"]["DataMarker"] + 0x30 } else { 0x32 }
+} else {
+    # デフォルト
+    $RecordSize   = 1300
+    $HeaderMarker = 0x31
+    $DataMarker   = 0x32
+}
+
+# ==================== 更新ルール設定 (INIから読込) ====================
+$UpdateRules = @()
+
+foreach ($key in $ConfigData.Keys) {
+    if ($key -like "Rule-*") {
+        $section = $ConfigData[$key]
+        
+        # 条件解析: "50:02, 78:534"
+        $conditions = @()
+        if ($section["Conditions"]) {
+            $section["Conditions"].Split(",") | ForEach-Object {
+                $parts = $_.Split(":")
+                if ($parts.Count -eq 2) {
+                    $conditions += @{
+                        StartByte = [int]$parts[0].Trim()
+                        Value     = $parts[1].Trim()
+                    }
+                }
+            }
+        }
+        
+        # 更新解析: "70:056"
+        $updates = @()
+        if ($section["Updates"]) {
+            $section["Updates"].Split(",") | ForEach-Object {
+                $parts = $_.Split(":")
+                if ($parts.Count -eq 2) {
+                    $updates += @{
+                        StartByte = [int]$parts[0].Trim()
+                        Value     = $parts[1].Trim()
+                    }
+                }
+            }
+        }
+        
+        if ($conditions.Count -gt 0 -and $updates.Count -gt 0) {
+            $UpdateRules += @{
+                Name       = $key
+                Conditions = $conditions
+                Updates    = $updates
+            }
+        }
+    }
+}
 
 # ==================== ヘルパー関数 ====================
 
