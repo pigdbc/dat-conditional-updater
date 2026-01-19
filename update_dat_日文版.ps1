@@ -9,14 +9,15 @@ param(
 )
 
 # ==================== フォルダ設定 ====================
-$InFolder  = "in"
-$OutFolder = "out"
-$LogFolder = "log"
+$BaseDir = $PSScriptRoot
+$InFolder = Join-Path $BaseDir "in"
+$OutFolder = Join-Path $BaseDir "out"
+$LogFolder = Join-Path $BaseDir "log"
 
 # ==================== 設定ファイル読込 ====================
-$ConfigFile = "config.ini"
-if (-not (Test-Path $ConfigFile)) { $ConfigFile = "config_日本語.ini" }
-if ($args.Count -gt 1) { $ConfigFile = $args[1] }
+$ConfigFile = Join-Path $BaseDir "config.ini"
+if (-not (Test-Path $ConfigFile)) { $ConfigFile = Join-Path $BaseDir "config_日本語.ini" }
+if ($args.Count -gt 1) { $ConfigFile = Join-Path $BaseDir $args[1] }
 
 if (-not (Test-Path $ConfigFile)) {
     Write-Host "エラー: 設定ファイル '$ConfigFile' が見つかりません！" -ForegroundColor Red
@@ -36,7 +37,8 @@ function Parse-IniFile {
         if ($line -match "^\[(.*)\]$") {
             $section = $matches[1]
             $ini[$section] = @{}
-        } elseif ($line -match "^(.*?)=(.*)$") {
+        }
+        elseif ($line -match "^(.*?)=(.*)$") {
             $key = $matches[1].Trim()
             $value = $matches[2].Trim()
             if (-not $ini.ContainsKey($section)) { $ini[$section] = @{} }
@@ -50,14 +52,15 @@ $ConfigData = Parse-IniFile -FilePath $ConfigFile
 
 # ==================== レコード設定 (INIから読込) ====================
 if ($ConfigData.ContainsKey("Settings")) {
-    $RecordSize   = if ($ConfigData["Settings"]["RecordSize"]) { [int]$ConfigData["Settings"]["RecordSize"] } else { 1300 }
+    $RecordSize = if ($ConfigData["Settings"]["RecordSize"]) { [int]$ConfigData["Settings"]["RecordSize"] } else { 1300 }
     $HeaderMarker = if ($ConfigData["Settings"]["HeaderMarker"]) { [int]$ConfigData["Settings"]["HeaderMarker"] + 0x30 } else { 0x31 }
-    $DataMarker   = if ($ConfigData["Settings"]["DataMarker"]) { [int]$ConfigData["Settings"]["DataMarker"] + 0x30 } else { 0x32 }
-} else {
+    $DataMarker = if ($ConfigData["Settings"]["DataMarker"]) { [int]$ConfigData["Settings"]["DataMarker"] + 0x30 } else { 0x32 }
+}
+else {
     # デフォルト
-    $RecordSize   = 1300
+    $RecordSize = 1300
     $HeaderMarker = 0x31
-    $DataMarker   = 0x32
+    $DataMarker = 0x32
 }
 
 # ==================== 更新ルール設定 (INIから読込) ====================
@@ -128,9 +131,9 @@ function Format-HexBytes {
 # ==================== スクリプトロジック ====================
 
 $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-$InputFile  = Join-Path $InFolder $FileName
+$InputFile = Join-Path $InFolder $FileName
 $OutputFile = Join-Path $OutFolder $FileName
-$LogFile    = Join-Path $LogFolder "$($FileName -replace '\.dat$','')_$timestamp.log"
+$LogFile = Join-Path $LogFolder "$($FileName -replace '\.dat$','')_$timestamp.log"
 
 foreach ($folder in @($OutFolder, $LogFolder)) {
     if (-not (Test-Path $folder)) { 

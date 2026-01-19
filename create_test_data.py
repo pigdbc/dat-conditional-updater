@@ -8,10 +8,15 @@ def create_test_dat():
     record_size = 1300
     num_records = 5
     
-    # Ensure in folder exists
-    os.makedirs('in', exist_ok=True)
+    # 使用脚本所在目录作为基础目录
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     
-    with open('in/data.dat', 'wb') as f:
+    # Ensure in folder exists
+    in_folder = os.path.join(BASE_DIR, 'in')
+    os.makedirs(in_folder, exist_ok=True)
+    
+    output_file = os.path.join(in_folder, 'data.dat')
+    with open(output_file, 'wb') as f:
         for i in range(num_records):
             record = bytearray(record_size)
             

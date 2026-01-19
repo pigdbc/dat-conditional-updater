@@ -47,14 +47,17 @@ def load_config(config_file='config.ini'):
     return settings, rules
 
 def main():
+    # 使用脚本所在目录作为基础目录
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    
     filename = sys.argv[1] if len(sys.argv) > 1 else 'data.dat'
-    config_file = sys.argv[2] if len(sys.argv) > 2 else 'config.ini'
+    config_file = os.path.join(BASE_DIR, sys.argv[2] if len(sys.argv) > 2 else 'config.ini')
     
-    input_file = f'in/{filename}'
-    output_file = f'out/{filename}'
+    input_file = os.path.join(BASE_DIR, 'in', filename)
+    output_file = os.path.join(BASE_DIR, 'out', filename)
     
-    os.makedirs('out', exist_ok=True)
-    os.makedirs('log', exist_ok=True)
+    os.makedirs(os.path.join(BASE_DIR, 'out'), exist_ok=True)
+    os.makedirs(os.path.join(BASE_DIR, 'log'), exist_ok=True)
     
     if not os.path.exists(config_file):
         print(f"Error: Config file {config_file} not found!")
@@ -71,7 +74,7 @@ def main():
     DATA_MARKER = 0x30 + settings['DataMarker']
     
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    log_file = f'log/{filename.replace(".dat", "")}_{timestamp}.log'
+    log_file = os.path.join(BASE_DIR, 'log', f'{filename.replace(".dat", "")}_{timestamp}.log')
     
     logs = []
     def log(msg):

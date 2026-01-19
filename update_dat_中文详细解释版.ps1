@@ -29,20 +29,21 @@ param(
 # ==================== 文件夹设置 ====================
 # 定义输入、输出、日志三个文件夹的名称
 # 这种结构便于管理文件：原始文件、处理后文件、处理日志分开存放
-$InFolder  = "in"     # 输入文件夹：存放待处理的原始DAT文件
-$OutFolder = "out"    # 输出文件夹：存放处理后的DAT文件
-$LogFolder = "log"    # 日志文件夹：存放处理日志，记录每次修改的详细信息
+$BaseDir = $PSScriptRoot   # 脚本所在目录作为基础目录
+$InFolder = Join-Path $BaseDir "in"     # 输入文件夹：存放待处理的原始DAT文件
+$OutFolder = Join-Path $BaseDir "out"    # 输出文件夹：存放处理后的DAT文件
+$LogFolder = Join-Path $BaseDir "log"    # 日志文件夹：存放处理日志，记录每次修改的详细信息
 
 # ==================== 记录格式设置 ====================
 # DAT文件由多条固定长度的记录组成，这里定义记录的格式参数
-$RecordSize   = 1300       # 每条记录的字节数（固定长度）
-                           # 文件总大小 ÷ RecordSize = 记录总数
+$RecordSize = 1300       # 每条记录的字节数（固定长度）
+# 文件总大小 ÷ RecordSize = 记录总数
 
 $HeaderMarker = 0x31       # 头部记录标识符，ASCII码0x31对应字符'1'
-                           # 第一个字节为'1'的记录被视为头部记录，会被跳过
+# 第一个字节为'1'的记录被视为头部记录，会被跳过
 
-$DataMarker   = 0x32       # 数据记录标识符，ASCII码0x32对应字符'2'
-                           # 第一个字节为'2'的记录被视为数据记录，会被处理
+$DataMarker = 0x32       # 数据记录标识符，ASCII码0x32对应字符'2'
+# 第一个字节为'2'的记录被视为数据记录，会被处理
 
 # ==================== 更新规则配置（核心配置区）====================
 # 这是脚本的核心配置部分，定义了"在什么条件下更新什么值"
@@ -70,115 +71,65 @@ $DataMarker   = 0x32       # 数据记录标识符，ASCII码0x32对应字符'2'
 $UpdateRules = @(
     # ========== 规则1 ==========
     @{
-        Name = "Rule-1"           # 规则名称，会显示在日志中
+        Name       = "Rule-1"           # 规则名称，会显示在日志中
         
         # WHERE条件部分（所有条件必须同时满足）
         # 多个条件之间是AND的关系，必须全部匹配才会触发更新
         Conditions = @(
             @{
                 StartByte = 50    # 从第50字节开始检查
-                Value = "02"      # 期望的值是"02"（占4字节：00 30 00 32）
+                Value     = "02"      # 期望的值是"02"（占4字节：00 30 00 32）
             },
             @{
                 StartByte = 78    # 从第78字节开始检查
-                Value = "534"     # 期望的值是"534"（占6字节）
+                Value     = "534"     # 期望的值是"534"（占6字节）
             }
         )
         
         # SET更新部分（条件满足时执行的更新操作）
-        Updates = @(
+        Updates    = @(
             @{
-                StartByte# ==================== 配置文件加载 ====================
-$ConfigFile = "config.ini"
-if (-not (Test-Path $ConfigFile)) { $ConfigFile = "config_日本語.ini" }
-if ($args.Count -gt 1) { $ConfigFile = $args[1] } # 允许从命令行传入配置文件路径
-
-if (-not (Test-Path $ConfigFile)) {
-    Write-Host "错误: 配置文件 '$ConfigFile' 不存在！" -ForegroundColor Red
-    exit 1
-}
-
-# INI解析函数
-function Parse-IniFile {
-    param([string]$FilePath)
-    $ini = @{}
-    $section = "Global"
+                StartByte = 70    # 更新第70字节开始的位置
+                Value     = "056"     # 新值为"056"（占6字节）
+            }
+        )
+    },
     
-    Get-Content $FilePath -Encoding UTF8 | ForEach-Object {
-        $line = $_.Trim()
-        if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith(";") -or $line.StartsWith("#")) { return }
+    # ========== 规则2 ==========
+    @{
+        Name       = "Rule-2"
         
-        if ($line -match "^\[(.*)\]$") {
-            $section = $matches[1]
-            $ini[$section] = @{}
-        } elseif ($line -match "^(.*?)=(.*)$") {
-            $key = $matches[1].Trim()
-            $value = $matches[2].Trim()
-            if (-not $ini.ContainsKey($section)) { $ini[$section] = @{} }
-            $ini[$section][$key] = $value
-        }
+        # 这条规则只有一个条件（WHERE条件）
+        Conditions = @(
+            @{
+                StartByte = 234   # 从第234字节开始检查
+                Value     = "99"      # 期望的值是"99"（占4字节）
+            }
+        )
+        
+        # 更新操作
+        Updates    = @(
+            @{
+                StartByte = 300   # 更新第300字节开始的位置
+                Value     = "77"      # 新值为"77"（占4字节）
+            }
+        )
     }
-    return $ini
-}
-
-$ConfigData = Parse-IniFile -FilePath $ConfigFile
-
-# ==================== 记录配置 (从INI加载) ====================
-if ($ConfigData.ContainsKey("Settings")) {
-    $RecordSize   = if ($ConfigData["Settings"]["RecordSize"]) { [int]$ConfigData["Settings"]["RecordSize"] } else { 1300 }
-    $HeaderMarker = if ($ConfigData["Settings"]["HeaderMarker"]) { [int]$ConfigData["Settings"]["HeaderMarker"] + 0x30 } else { 0x31 }
-    $DataMarker   = if ($ConfigData["Settings"]["DataMarker"]) { [int]$ConfigData["Settings"]["DataMarker"] + 0x30 } else { 0x32 }
-} else {
-    # 默认值
-    $RecordSize   = 1300
-    $HeaderMarker = 0x31
-    $DataMarker   = 0x32
-}
-
-# ==================== 更新规则配置 (从INI加载) ====================
-$UpdateRules = @()
-
-foreach ($key in $ConfigData.Keys) {
-    if ($key -like "Rule-*") {
-        $section = $ConfigData[$key]
-        
-        # 解析条件: "50:02, 78:534"
-        $conditions = @()
-        if ($section["Conditions"]) {
-            $section["Conditions"].Split(",") | ForEach-Object {
-                $parts = $_.Split(":")
-                if ($parts.Count -eq 2) {
-                    $conditions += @{
-                        StartByte = [int]$parts[0].Trim()
-                        Value     = $parts[1].Trim()
-                    }
-                }
-            }
-        }
-        
-        # 解析更新: "70:056"
-        $updates = @()
-        if ($section["Updates"]) {
-            $section["Updates"].Split(",") | ForEach-Object {
-                $parts = $_.Split(":")
-                if ($parts.Count -eq 2) {
-                    $updates += @{
-                        StartByte = [int]$parts[0].Trim()
-                        Value     = $parts[1].Trim()
-                    }
-                }
-            }
-        }
-        
-        if ($conditions.Count -gt 0 -and $updates.Count -gt 0) {
-            $UpdateRules += @{
-                Name       = $key
-                Conditions = $conditions
-                Updates    = $updates
-            }
-        }
-    }
-}
+    
+    # 【如何添加更多规则】
+    # 在上面的大括号后面加逗号，然后按照同样的格式添加新规则
+    # 例如：
+    # ,
+    # @{
+    #     Name = "Rule-3"
+    #     Conditions = @(
+    #         @{ StartByte = 100; Value = "ABC" }
+    #     )
+    #     Updates = @(
+    #         @{ StartByte = 200; Value = "XYZ" }
+    #     )
+    # }
+)
 
 # ==================== 辅助函数定义 ====================
 # 这些函数封装了常用的操作，使主程序逻辑更清晰
@@ -215,9 +166,9 @@ function Format-HexBytes {
 $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 
 # 构建完整的文件路径
-$InputFile  = Join-Path $InFolder $FileName                 # 输入文件完整路径
+$InputFile = Join-Path $InFolder $FileName                 # 输入文件完整路径
 $OutputFile = Join-Path $OutFolder $FileName                # 输出文件完整路径
-$LogFile    = Join-Path $LogFolder "$($FileName -replace '\.dat$','')_$timestamp.log"  
+$LogFile = Join-Path $LogFolder "$($FileName -replace '\.dat$','')_$timestamp.log"  
 # 日志文件名：原文件名（去掉.dat）+ 时间戳 + .log
 
 # 创建输出和日志文件夹（如果不存在）
