@@ -33,17 +33,17 @@ DataMarker = 2           # 数据记录标识符
 
 [Rule-1]
 # 条件：多个条件用逗号分隔，格式为 名称:字符位置:期望值
-Conditions = Field50:50:02, Field78:78:534
+Conditions = 条件A:50:02, 条件B:78:534
 # 更新：格式为 名称:字符位置:新值
-Updates = Field70:70:056
+Updates = 更新值:70:056
 
 # 也支持从起始位置写入多字符，例如：
 Conditions = City:20:東京都
 Updates = City:20:神奈川
 
 [Rule-2]
-Conditions = 234:99
-Updates = 300:77
+Conditions = 数値条件:234:99
+Updates = 数値更新:300:77
 ```
 
 等同于 SQL:
@@ -72,9 +72,9 @@ Output: out/data.dat
   Rule-2: IF Char234='99' THEN SET Char300='77'
 
 [#   2] UPDATED
-  Rule-1: Char70 '000' → '056'
+  Rule-1: 更新値 '000' → '056'
 [#   3] UPDATED
-  Rule-1: Char70 '000' → '056'
+  Rule-1: 更新値 '000' → '056'
 
 Summary: 3/5 records updated
   Rule-1 hits: 2
