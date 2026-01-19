@@ -16,8 +16,7 @@ $LogFolder = Join-Path $BaseDir "log"
 
 # ==================== 設定ファイル読込 ====================
 $ConfigFile = Join-Path $BaseDir "config.ini"
-if (-not (Test-Path $ConfigFile)) { $ConfigFile = Join-Path $BaseDir "config_日本語.ini" }
-if ($args.Count -gt 1) { $ConfigFile = Join-Path $BaseDir $args[1] }
+if ($args.Count -gt 0) { $ConfigFile = Join-Path $BaseDir $args[0] }
 
 if (-not (Test-Path $ConfigFile)) {
     Write-Host "エラー: 設定ファイル '$ConfigFile' が見つかりません！" -ForegroundColor Red
@@ -50,15 +49,15 @@ function Parse-IniFile {
 
 $ConfigData = Parse-IniFile -FilePath $ConfigFile
 
-# ==================== レコード設定 (INIから読込) ====================
+# ==================== レコード設定 (INIから読込, 文字数) ====================
 if ($ConfigData.ContainsKey("Settings")) {
-    $RecordSize = if ($ConfigData["Settings"]["RecordSize"]) { [int]$ConfigData["Settings"]["RecordSize"] } else { 1300 }
+    $RecordSizeChars = if ($ConfigData["Settings"]["RecordSize"]) { [int]$ConfigData["Settings"]["RecordSize"] } else { 1300 }
     $HeaderMarker = if ($ConfigData["Settings"]["HeaderMarker"]) { [int]$ConfigData["Settings"]["HeaderMarker"] + 0x30 } else { 0x31 }
     $DataMarker = if ($ConfigData["Settings"]["DataMarker"]) { [int]$ConfigData["Settings"]["DataMarker"] + 0x30 } else { 0x32 }
 }
 else {
     # デフォルト
-    $RecordSize = 1300
+    $RecordSizeChars = 1300
     $HeaderMarker = 0x31
     $DataMarker = 0x32
 }
@@ -70,29 +69,49 @@ foreach ($key in $ConfigData.Keys) {
     if ($key -like "Rule-*") {
         $section = $ConfigData[$key]
         
-        # 条件解析: "50:02, 78:534"
+        # 条件解析: "Name:50:02, Field78:78:534"
         $conditions = @()
         if ($section["Conditions"]) {
             $section["Conditions"].Split(",") | ForEach-Object {
                 $parts = $_.Split(":")
-                if ($parts.Count -eq 2) {
+                if ($parts.Count -ge 3) {
                     $conditions += @{
+                        Name      = $parts[0].Trim()
+                        StartByte = [int]$parts[1].Trim()
+                        Value     = $parts[2].Trim()
+                        CharLength = $parts[2].Trim().Length
+                    }
+                }
+                elseif ($parts.Count -ge 2) {
+                    $conditions += @{
+                        Name      = ""
                         StartByte = [int]$parts[0].Trim()
                         Value     = $parts[1].Trim()
+                        CharLength = $parts[1].Trim().Length
                     }
                 }
             }
         }
         
-        # 更新解析: "70:056"
+        # 更新解析: "Field70:70:056"
         $updates = @()
         if ($section["Updates"]) {
             $section["Updates"].Split(",") | ForEach-Object {
                 $parts = $_.Split(":")
-                if ($parts.Count -eq 2) {
+                if ($parts.Count -ge 3) {
                     $updates += @{
+                        Name      = $parts[0].Trim()
+                        StartByte = [int]$parts[1].Trim()
+                        Value     = $parts[2].Trim()
+                        CharLength = $parts[2].Trim().Length
+                    }
+                }
+                elseif ($parts.Count -ge 2) {
+                    $updates += @{
+                        Name      = ""
                         StartByte = [int]$parts[0].Trim()
                         Value     = $parts[1].Trim()
+                        CharLength = $parts[1].Trim().Length
                     }
                 }
             }
@@ -165,7 +184,7 @@ Log ""
 
 $fileInfo = Get-Item $InputFile
 $fileLength = $fileInfo.Length
-$recordCount = [Math]::Floor($fileLength / $RecordSize)
+$recordCount = [Math]::Floor($fileLength / ($RecordSizeChars * 2))
 
 Log "ファイルサイズ: $fileLength バイト"
 Log "レコード数: $recordCount | ルール数: $($UpdateRules.Count)"
@@ -173,8 +192,10 @@ Log ""
 
 # ルール概要を表示
 foreach ($rule in $UpdateRules) {
-    $condStr = ($rule.Conditions | ForEach-Object { "[Byte$($_.StartByte)]='$($_.Value)'" }) -join " AND "
-    $updStr = ($rule.Updates | ForEach-Object { "[Byte$($_.StartByte)]='$($_.Value)'" }) -join ", "
+    $condStr = ($rule.Conditions | ForEach-Object { "[Char$($_.StartByte)]='$($_.Value)'" }) -join " AND "
+    $updStr = ($rule.Updates | ForEach-Object { 
+        if ($_.Name) { "$($_.Name)='$($_.Value)'" } else { "[Char$($_.StartByte)]='$($_.Value)'" }
+    }) -join ", "
     Log "  $($rule.Name): IF $condStr THEN SET $updStr"
 }
 Log ""
@@ -185,7 +206,8 @@ $modifiedCount = 0
 $ruleHitCount = @{}
 foreach ($rule in $UpdateRules) { $ruleHitCount[$rule.Name] = 0 }
 
-$recordBuffer = New-Object byte[] $RecordSize
+$RecordSizeBytes = $RecordSizeChars * 2
+$recordBuffer = New-Object byte[] $RecordSizeBytes
 
 # FileStreamでストリーム処理
 $inputStream = [System.IO.File]::OpenRead($InputFile)
@@ -193,10 +215,10 @@ $outputStream = [System.IO.File]::Create($OutputFile)
 
 try {
     for ($i = 0; $i -lt $recordCount; $i++) {
-        $bytesRead = $inputStream.Read($recordBuffer, 0, $RecordSize)
+        $bytesRead = $inputStream.Read($recordBuffer, 0, $RecordSizeBytes)
         
-        if ($bytesRead -ne $RecordSize) {
-            Log "[#$($($i + 1).ToString().PadLeft(4))] エラー - 読取バイト不足: $bytesRead / $RecordSize"
+        if ($bytesRead -ne $RecordSizeBytes) {
+            Log "[#$($($i + 1).ToString().PadLeft(4))] エラー - 読取バイト不足: $bytesRead / $RecordSizeBytes"
             continue
         }
         
@@ -216,7 +238,7 @@ try {
                 $conditionDetails = @()
                 
                 foreach ($cond in $rule.Conditions) {
-                    $offset = $cond.StartByte - 1
+                    $offset = ($cond.StartByte - 1) * 2
                     $expectedBytes = ConvertTo-BigEndianUnicodeBytes -Text $cond.Value
                     $len = $expectedBytes.Length
                     
@@ -232,13 +254,13 @@ try {
                     }
                     if (-not $match) { $allConditionsMet = $false }
                     
-                    $conditionDetails += "[Byte$($cond.StartByte)]='$currentValue'(期待'$($cond.Value)')"
+                    $conditionDetails += "[Char$($cond.StartByte)]='$currentValue'(期待'$($cond.Value)')"
                 }
                 
                 if ($allConditionsMet) {
                     # 更新実行
                     foreach ($upd in $rule.Updates) {
-                        $offset = $upd.StartByte - 1
+                        $offset = ($upd.StartByte - 1) * 2
                         $newBytes = ConvertTo-BigEndianUnicodeBytes -Text $upd.Value
                         $len = $newBytes.Length
                         
@@ -250,7 +272,8 @@ try {
                         # 新値を書込
                         [Array]::Copy($newBytes, 0, $recordBuffer, $offset, $len)
                         
-                        $changes += "  $($rule.Name): [Byte$($upd.StartByte)] '$oldValue' → '$($upd.Value)' ($(Format-HexBytes $oldBytes) → $(Format-HexBytes $newBytes))"
+                        $label = if ($upd.Name) { $upd.Name } else { "Char$($upd.StartByte)" }
+                        $changes += "  $($rule.Name): $label '$oldValue' → '$($upd.Value)' ($(Format-HexBytes $oldBytes) → $(Format-HexBytes $newBytes))"
                     }
                     
                     $hasChange = $true
@@ -265,7 +288,7 @@ try {
             }
         }
         
-        $outputStream.Write($recordBuffer, 0, $RecordSize)
+        $outputStream.Write($recordBuffer, 0, $RecordSizeBytes)
     }
 }
 finally {
