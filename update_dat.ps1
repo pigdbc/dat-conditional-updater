@@ -64,10 +64,15 @@ else {
 
 # ==================== 更新ルール設定 (INIから読込) ====================
 $UpdateRules = @()
+$ruleKeys = $ConfigData.Keys | Where-Object { $_ -like "Rule-*" } | Sort-Object {
+    $num = $_ -replace '^Rule-', ''
+    if ($num -match '^\d+$') { [int]$num } else { [int]::MaxValue }
+}, {
+    $_
+}
 
-foreach ($key in $ConfigData.Keys) {
-    if ($key -like "Rule-*") {
-        $section = $ConfigData[$key]
+foreach ($key in $ruleKeys) {
+    $section = $ConfigData[$key]
         
         # 条件解析: "Name:50:02, Field78:78:534"
         $conditions = @()
@@ -117,12 +122,11 @@ foreach ($key in $ConfigData.Keys) {
             }
         }
         
-        if ($conditions.Count -gt 0 -and $updates.Count -gt 0) {
-            $UpdateRules += @{
-                Name       = $key
-                Conditions = $conditions
-                Updates    = $updates
-            }
+    if ($conditions.Count -gt 0 -and $updates.Count -gt 0) {
+        $UpdateRules += @{
+            Name       = $key
+            Conditions = $conditions
+            Updates    = $updates
         }
     }
 }
@@ -192,9 +196,12 @@ Log ""
 
 # ルール概要を表示
 foreach ($rule in $UpdateRules) {
-    $condStr = ($rule.Conditions | ForEach-Object { "[Char$($_.StartByte)]='$($_.Value)'" }) -join " AND "
+    $condStr = ($rule.Conditions | ForEach-Object {
+        $label = if ($_.Name) { $_.Name } else { "Char$($_.StartByte)" }
+        "$label = '$($_.Value)'"
+    }) -join " AND "
     $updStr = ($rule.Updates | ForEach-Object { 
-        if ($_.Name) { "$($_.Name)='$($_.Value)'" } else { "[Char$($_.StartByte)]='$($_.Value)'" }
+        if ($_.Name) { "$($_.Name) = '$($_.Value)'" } else { "[Char$($_.StartByte)] = '$($_.Value)'" }
     }) -join ", "
     Log "  $($rule.Name): IF $condStr THEN SET $updStr"
 }
@@ -285,6 +292,9 @@ try {
                 Log "[#$($recordNum.ToString().PadLeft(4))] UPDATED"
                 foreach ($c in $changes) { Log $c }
                 $modifiedCount++
+            }
+            else {
+                Log "[#$($recordNum.ToString().PadLeft(4))] 变更なし"
             }
         }
         
